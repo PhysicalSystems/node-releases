@@ -152,13 +152,19 @@ jobs:
           METADATA_SHA256: ${{ inputs.release_metadata_sha256 }}
         shell: python
         run: |
-          import os, subprocess, sys
+          import os, runpy, shutil, subprocess, sys
           from pathlib import Path
+          upload_stage = Path(os.environ['GITHUB_WORKSPACE']) / '.release-stage'
           subprocess.run([sys.executable, 'scripts/release.py', 'stage',
               '--candidate-release-id', os.environ['RELEASE_ID'],
               '--release-metadata-sha256', os.environ['METADATA_SHA256'],
               '--proofs', str(Path(os.environ['RUNNER_TEMP']) / 'node-proofs'),
-              '--output', str(Path(os.environ['GITHUB_WORKSPACE']) / '.release-stage')], check=True, timeout=420)
+              '--output', str(upload_stage)], check=True, timeout=420)
+          # PyPA writes a .publish.attestation beside the uploaded wheel.
+          # Retain a separate exact input snapshot; never relax check_stage().
+          readback_input = Path(os.environ['RUNNER_TEMP']) / 'readback-input'
+          shutil.copytree(upload_stage, readback_input)
+          runpy.run_path('scripts/release.py')['check_stage'](readback_input, os.environ['METADATA_SHA256'])
       - name: Publish one reviewed prebuilt wheel via environment-scoped OIDC
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2 commit
         with:
@@ -173,7 +179,7 @@ jobs:
           import os, subprocess, sys, time
           from pathlib import Path
           command = [sys.executable, 'scripts/release.py', 'readback',
-              '--directory', str(Path(os.environ['GITHUB_WORKSPACE']) / '.release-stage'),
+              '--directory', str(Path(os.environ['RUNNER_TEMP']) / 'readback-input'),
               '--release-metadata-sha256', os.environ['METADATA_SHA256'],
               '--output', str(Path(os.environ['RUNNER_TEMP']) / 'published-manifests')]
           # Registry propagation may briefly lag upload. Retry reads only.
@@ -182,6 +188,13 @@ jobs:
               if result.returncode == 0:
                   print(result.stdout)
                   break
+              # The verifier emits a safe one-line refusal. Do not print raw
+              # tracebacks, subprocess output, terminal controls or environment.
+              safe_errors = [line for line in result.stderr.splitlines()
+                  if line.startswith('Release refused: ') and len(line) <= 300
+                  and all(32 <= ord(char) <= 126 for char in line)]
+              if safe_errors:
+                  print(safe_errors[-1], file=sys.stderr)
               if attempt == 3:
                   raise RuntimeError('Upload returned; exact public readback failed. Inspect before any new upload.')
               time.sleep(3)

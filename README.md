@@ -58,6 +58,16 @@ OpenCV remain separate distributions under their own licenses.
    upload is never retried or silently skipped. Review a failed upload/readback
    before deciding what to do next.
 
+Before invoking PyPA, the workflow copies and revalidates the approved stage
+into a separate `RUNNER_TEMP/readback-input` snapshot. PyPA may add its expected
+`.publish.attestation` sidecar to the upload directory; readback uses the
+untouched snapshot instead. Both pre-upload and readback validation retain the
+same strict exact-file checks. A readback failure reports only the verifier's
+bounded, sanitized refusal—not its raw stderr or traceback. If upload succeeded
+but readback failed, do not rerun publication: independently verify the published
+wheel and recover manifests through the read-only `readback` operation using
+the exact approved local capsule/wheel stage.
+
 If any prerequisite is absent, promotion fails closed. A GitHub candidate or a
 successful test run is not evidence that a package is published to PyPI. Installing this
 experimental preview never authorizes physical execution or certifies safety.

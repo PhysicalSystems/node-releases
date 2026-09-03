@@ -1,6 +1,9 @@
 """Keep release authority and the fresh platform matrix explicit in source."""
 from pathlib import Path
 import re
+from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,3 +49,52 @@ def test_public_repository_has_no_wheel_or_private_runtime_code():
     text = (ROOT / "scripts/release.py").read_text()
     assert "build_physical_node" not in text
     assert "private-candidate" not in text
+
+
+def step_python(name):
+    text = (ROOT / ".github/workflows/publish.yml").read_text()
+    step = text.split("- name: " + name, 1)[1].split("        run: |\n", 1)[1]
+    lines = []
+    for line in step.splitlines():
+        if line and not line.startswith("          "):
+            break
+        lines.append(line[10:])
+    return "\n".join(lines)
+
+
+def test_snapshot_created_and_validated_before_pypa_uses_original_upload_stage():
+    text = (ROOT / ".github/workflows/publish.yml").read_text()
+    snapshot = step_python("Revalidate pins, all six current-attempt proofs, dependencies and protections after human approval")
+    compile(snapshot, "workflow-stage", "exec")
+    assert "shutil.copytree(upload_stage, readback_input)" in snapshot
+    assert "['check_stage'](readback_input, os.environ['METADATA_SHA256'])" in snapshot
+    assert snapshot.index("subprocess.run") < snapshot.index("shutil.copytree") < snapshot.index("['check_stage']")
+    assert text.index("shutil.copytree") < text.index("uses: pypa/gh-action-pypi-publish")
+    readback = step_python("Verify anonymous exact public readback and generate six real install manifests")
+    assert "Path(os.environ['RUNNER_TEMP']) / 'readback-input'" in readback
+    assert "GITHUB_WORKSPACE" not in readback and ".release-stage" not in readback
+    assert "packages-dir: .release-stage/upload/" in text
+
+
+def test_readback_failure_prints_only_bounded_sanitized_refusal(monkeypatch, capsys, tmp_path):
+    import subprocess
+    import time
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("METADATA_SHA256", "a" * 64)
+    commands = []
+    unsafe = "Traceback with synthetic-secret\nRelease refused: " + "x" * 301 + "\nRelease refused: \x1b[31munsafe\n"
+    stderr = unsafe + "Release refused: Unexpected publication files\n"
+    def run(command, **kwargs):
+        commands.append(command)
+        assert command[command.index("--directory") + 1] == str(tmp_path / "readback-input")
+        assert "readback" in command and "stage" not in command
+        return SimpleNamespace(returncode=1, stdout="synthetic-secret", stderr=stderr)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    code = step_python("Verify anonymous exact public readback and generate six real install manifests")
+    with pytest.raises(RuntimeError, match="Inspect before any new upload"):
+        exec(compile(code, "workflow-readback", "exec"), {})
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "Release refused: Unexpected publication files\n" * 4
+    assert len(commands) == 4  # Reads only; the upload Action is never retried.
