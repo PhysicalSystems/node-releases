@@ -18,6 +18,7 @@ def test_workflows_pin_actions_and_have_no_private_access_or_automatic_publish()
         assert "PhysicalSystems/node/" not in text
     publish = (ROOT / ".github/workflows/publish.yml").read_text()
     assert "workflow_dispatch:" in publish and "pull_request:" not in publish and "push:" not in publish
+    assert "Published candidate prerelease ID" in publish
     assert "platform: [linux-x64, win32-x64]" in publish
     assert "python: ['3.10', '3.11', '3.12']" in publish
     assert "needs: [verify, install]" in publish

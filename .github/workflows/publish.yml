@@ -1,12 +1,12 @@
 name: Publish reviewed minimal Node
 
 # Never build private source here. Ingress is an explicitly approved two-asset
-# draft release, identified by numeric ID and an operator-reviewed metadata hash.
+# public candidate prerelease, identified by ID and an operator-reviewed hash.
 on:
   workflow_dispatch:
     inputs:
       candidate_release_id:
-        description: 'Draft release ID containing only the approved wheel and release.json'
+        description: 'Published candidate prerelease ID containing only the approved wheel and release.json'
         required: true
         type: string
       release_metadata_sha256:
@@ -44,7 +44,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip --isolated install --index-url https://pypi.org/simple packaging==26.3 pytest==8.4.2
       - run: python -m pytest -q tests
-      - name: Validate operator pins, draft scope, public dependencies and protections
+      - name: Validate operator pins, candidate prerelease scope, public dependencies and protections
         env:
           GH_TOKEN: ${{ github.token }}
           PHYSICAL_NODE_PUBLISH_POLICY: ${{ vars.PHYSICAL_NODE_PUBLISH_POLICY }}

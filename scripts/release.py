@@ -13,6 +13,7 @@ import argparse
 import ast
 import base64
 import csv
+from datetime import datetime
 from email.parser import BytesParser
 import hashlib
 import io
@@ -37,6 +38,7 @@ ENVIRONMENT = "physical-node-pypi"
 POLICY = "v1-minimal-node-preview"
 VERSION = "0.2.0"
 NODE_WHEEL = "physicalsystems_node-0.2.0-py3-none-any.whl"
+CANDIDATE_TAG = "physicalsystems-node-v0.2.0-candidate"
 RUNTIME_WHEEL = "tinyedge_runtime-0.2.0-py3-none-any.whl"
 RUNTIME_SHA256 = "4d25fcfa055bf54faf69591e4a14bec89dc7f8d086b2bed6bf19912041403937"
 PINS = {"tinyedge-runtime": "0.2.0", "numpy": "1.26.4", "opencv-python-headless": "4.10.0.84"}
@@ -270,11 +272,29 @@ def github(path, *, binary=False, maximum=MAX_JSON):
     prefix = "repos/" + REPOSITORY + "/"
     permitted = r"(?:releases/[1-9][0-9]{0,14}|releases/assets/[1-9][0-9]{0,14}|git/ref/heads/main|environments/physical-node-pypi(?:/deployment-branch-policies\?per_page=100)?|actions/runs/[1-9][0-9]{0,14}(?:/attempts/[1-9][0-9]{0,14}/jobs\?per_page=100)?)"
     require(type(path) is str and path.startswith(prefix) and re.fullmatch(permitted, path[len(prefix):]), "GitHub read outside the release-only allowlist")
+    suffix = path[len(prefix):]
+    if suffix == "git/ref/heads/main":
+        endpoint = "main-reference"
+    elif suffix.startswith("actions/runs/"):
+        endpoint = "workflow-jobs" if "/jobs?" in suffix else "workflow-run"
+    elif suffix.startswith("environments/"):
+        endpoint = "branch-policy" if "/deployment-branch-policies?" in suffix else "environment"
+    else:
+        endpoint = "candidate-asset" if suffix.startswith("releases/assets/") else "candidate-release"
     command = ["gh", "api", "--hostname", "github.com", "--method", "GET", "-H", "X-GitHub-Api-Version: 2022-11-28"]
     if binary:
         command += ["-H", "Accept: application/octet-stream"]
-    result = subprocess.run([*command, path], capture_output=True, timeout=60)
-    require(result.returncode == 0 and len(result.stdout) <= maximum, "Required bounded GitHub evidence is unavailable")
+    try:
+        result = subprocess.run([*command, path], capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired as error:
+        raise ReleaseError(f"GitHub evidence unavailable [{endpoint}; timeout]") from error
+    if result.returncode != 0:
+        # Only a fixed endpoint class and three-digit status are safe to log.
+        # Never include gh stderr/stdout, a URL, caller input, or credentials.
+        status = re.search(rb"\(HTTP ([1-5][0-9]{2})\)", result.stderr[-2048:])
+        label = "HTTP " + status[1].decode("ascii") if status else "HTTP status unavailable"
+        raise ReleaseError(f"GitHub evidence unavailable [{endpoint}; {label}]")
+    require(len(result.stdout) <= maximum, f"GitHub evidence unavailable [{endpoint}; response exceeds byte bound]")
     return result.stdout if binary else document(result.stdout, maximum)
 
 
@@ -324,18 +344,26 @@ def fetch_candidate(release_id, metadata_sha):
     release_id = positive_id(release_id)
     hash_pin(metadata_sha)
     release = github(f"repos/{REPOSITORY}/releases/{release_id}")
-    require(release.get("id") == int(release_id) and release.get("draft") is True and release.get("target_commitish") == "main",
-        "Candidate must be an operator-staged draft targeting main")
+    require(release.get("id") == int(release_id) and release.get("draft") is False and release.get("prerelease") is True
+        and release.get("tag_name") == CANDIDATE_TAG and release.get("target_commitish") == "main",
+        "Candidate must be the approved published prerelease targeting main")
+    published_at = release.get("published_at")
+    require(type(published_at) is str and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", published_at),
+        "Candidate must have a valid publication timestamp")
+    try:
+        datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as error:
+        raise ReleaseError("Candidate must have a valid publication timestamp") from error
     assets = release.get("assets")
     require(type(assets) is list and len(assets) == 2 and {item.get("name") for item in assets} == {NODE_WHEEL, "release.json"},
-        "Draft release must contain exactly the wheel and release.json")
+        "Candidate release must contain exactly the wheel and release.json")
     fetched = {}
     for item in assets:
-        require(type(item.get("id")) is int and item["id"] > 0 and item.get("state") == "uploaded", "Invalid draft asset identity/state")
+        require(type(item.get("id")) is int and item["id"] > 0 and item.get("state") == "uploaded", "Invalid candidate asset identity/state")
         limit = MAX_WHEEL if item["name"] == NODE_WHEEL else MAX_JSON
-        require(type(item.get("size")) is int and 0 < item["size"] <= limit, "Draft asset exceeds its bound")
+        require(type(item.get("size")) is int and 0 < item["size"] <= limit, "Candidate asset exceeds its bound")
         raw = github(f"repos/{REPOSITORY}/releases/assets/{item['id']}", binary=True, maximum=limit)
-        require(len(raw) == item["size"] and item.get("digest") == "sha256:" + sha(raw), "Draft asset changed or API digest differs")
+        require(len(raw) == item["size"] and item.get("digest") == "sha256:" + sha(raw), "Candidate asset changed or API digest differs")
         fetched[item["name"]] = raw
     capsule = validate_capsule(fetched["release.json"], metadata_sha)
     inspect_node(fetched[NODE_WHEEL], capsule)
