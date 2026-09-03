@@ -248,38 +248,45 @@ def test_protection_gates(protection, fault):
 def fake_ingress(monkeypatch, sample):
     raw = r.canonical(sample["capsule"])
     payloads = {"release.json": raw, r.NODE_WHEEL: sample["wheel"]}
-    draft = {"id": 77, "draft": True, "target_commitish": "main", "assets": [
+    candidate = {"id": 77, "draft": False, "prerelease": True, "tag_name": r.CANDIDATE_TAG,
+        "target_commitish": "main", "published_at": "2026-09-03T14:00:00Z", "assets": [
         {"id": index, "name": name, "state": "uploaded", "size": len(data), "digest": "sha256:" + r.sha(data)}
         for index, (name, data) in enumerate(payloads.items(), 100)]}
     calls = []
     def github(path, **kwargs):
         calls.append(path)
-        if path.endswith("/releases/77"): return draft
-        asset = next(item for item in draft["assets"] if path.endswith("/" + str(item["id"])))
+        if path.endswith("/releases/77"): return candidate
+        asset = next(item for item in candidate["assets"] if path.endswith("/" + str(item["id"])))
         return payloads[asset["name"]]
     monkeypatch.setattr(r, "github", github)
     monkeypatch.setattr(r, "dependencies_public", lambda capsule: None)
-    return draft, payloads, raw, calls
+    return candidate, payloads, raw, calls
 
 
-def test_draft_two_asset_ingress_and_hash_binding(monkeypatch, sample):
-    draft, payloads, raw, calls = fake_ingress(monkeypatch, sample)
+def test_published_candidate_two_asset_ingress_and_hash_binding(monkeypatch, sample):
+    candidate, payloads, raw, calls = fake_ingress(monkeypatch, sample)
     capsule, fetched = r.fetch_candidate("77", r.sha(raw))
     assert capsule == sample["capsule"] and fetched == payloads
     assert all(path.startswith("repos/PhysicalSystems/node-releases/") for path in calls)
 
 
-@pytest.mark.parametrize("fault", ["published", "branch", "extra", "missing", "wrong-id", "asset-digest", "asset-size", "incomplete", "substituted"])
-def test_draft_changes_fail_closed(monkeypatch, sample, fault):
-    draft, payloads, raw, _ = fake_ingress(monkeypatch, sample)
-    if fault == "published": draft["draft"] = False
-    elif fault == "branch": draft["target_commitish"] = "feature"
-    elif fault == "extra": draft["assets"].append({"name": "source.tar.gz"})
-    elif fault == "missing": draft["assets"].pop()
-    elif fault == "wrong-id": draft["id"] = 78
-    elif fault == "asset-digest": draft["assets"][0]["digest"] = "sha256:" + "a" * 64
-    elif fault == "asset-size": draft["assets"][0]["size"] += 1
-    elif fault == "incomplete": draft["assets"][0]["state"] = "starter"
+@pytest.mark.parametrize("fault", ["draft", "not-prerelease", "wrong-tag", "missing-published-at", "invalid-date", "non-utc-date",
+    "branch", "extra", "missing", "wrong-id", "asset-digest", "asset-size", "incomplete", "substituted"])
+def test_candidate_changes_fail_closed(monkeypatch, sample, fault):
+    candidate, payloads, raw, _ = fake_ingress(monkeypatch, sample)
+    if fault == "draft": candidate["draft"] = True
+    elif fault == "not-prerelease": candidate["prerelease"] = False
+    elif fault == "wrong-tag": candidate["tag_name"] = "unapproved-candidate"
+    elif fault == "missing-published-at": candidate["published_at"] = None
+    elif fault == "invalid-date": candidate["published_at"] = "2026-02-31T14:00:00Z"
+    elif fault == "non-utc-date": candidate["published_at"] = "2026-09-03T14:00:00+01:00"
+    elif fault == "branch": candidate["target_commitish"] = "feature"
+    elif fault == "extra": candidate["assets"].append({"name": "source.tar.gz"})
+    elif fault == "missing": candidate["assets"].pop()
+    elif fault == "wrong-id": candidate["id"] = 78
+    elif fault == "asset-digest": candidate["assets"][0]["digest"] = "sha256:" + "a" * 64
+    elif fault == "asset-size": candidate["assets"][0]["size"] += 1
+    elif fault == "incomplete": candidate["assets"][0]["state"] = "starter"
     elif fault == "substituted": payloads[r.NODE_WHEEL] += b"tampered"
     with pytest.raises(r.ReleaseError): r.fetch_candidate("77", r.sha(raw))
 
@@ -482,3 +489,41 @@ def test_auth_asset_fetch_uses_read_only_own_repo_api_without_caller_url(monkeyp
     assert calls[0][calls[0].index("--method") + 1] == "GET"
     assert "Accept: application/octet-stream" in calls[0]
     assert "--hostname" in calls[0]
+
+
+@pytest.mark.parametrize("suffix,endpoint", [
+    ("git/ref/heads/main", "main-reference"),
+    ("actions/runs/123", "workflow-run"),
+    ("actions/runs/123/attempts/1/jobs?per_page=100", "workflow-jobs"),
+    ("environments/physical-node-pypi", "environment"),
+    ("environments/physical-node-pypi/deployment-branch-policies?per_page=100", "branch-policy"),
+    ("releases/77", "candidate-release"),
+    ("releases/assets/123", "candidate-asset"),
+])
+def test_github_refusal_has_only_safe_endpoint_class_and_status(monkeypatch, suffix, endpoint):
+    class Result:
+        returncode = 1
+        stdout = b'{"secret":"synthetic-body-secret"}'
+        stderr = b'gh: synthetic-token https://example.invalid/private (HTTP 403)\n'
+    monkeypatch.setattr(r.subprocess, "run", lambda *args, **kwargs: Result())
+    with pytest.raises(r.ReleaseError) as error:
+        r.github(f"repos/{r.REPOSITORY}/{suffix}")
+    assert str(error.value) == f"GitHub evidence unavailable [{endpoint}; HTTP 403]"
+
+
+@pytest.mark.parametrize("fault", ["no-status", "untrusted-status", "oversized", "timeout"])
+def test_github_diagnostics_never_echo_untrusted_error_details(monkeypatch, fault):
+    class Result:
+        returncode = 0 if fault == "oversized" else 1
+        stdout = b"synthetic-secret" * 100
+        stderr = b"synthetic-secret (HTTP 999)" if fault == "untrusted-status" else b"synthetic-secret"
+    def invoke(*args, **kwargs):
+        if fault == "timeout":
+            raise r.subprocess.TimeoutExpired(["gh", "synthetic-secret"], 60, output=b"synthetic-secret", stderr=b"synthetic-secret")
+        return Result()
+    monkeypatch.setattr(r.subprocess, "run", invoke)
+    with pytest.raises(r.ReleaseError) as error:
+        r.github(f"repos/{r.REPOSITORY}/releases/77", maximum=100)
+    reason = {"no-status": "HTTP status unavailable", "untrusted-status": "HTTP status unavailable",
+        "oversized": "response exceeds byte bound", "timeout": "timeout"}[fault]
+    assert str(error.value) == f"GitHub evidence unavailable [candidate-release; {reason}]"

@@ -19,11 +19,18 @@ OpenCV remain separate distributions under their own licenses.
    allowlist and complete private test evidence locally. The private exporter
    emits only the approved wheel and canonical `release.json`. Neither the
    private exporter nor its source/evidence is uploaded here.
-2. The operator stages a **draft GitHub release targeting `main`** here, with
-   exactly those two assets, and reviews the raw SHA-256 of `release.json`.
+2. The operator publishes a **candidate prerelease targeting `main`** here,
+   tagged `physicalsystems-node-v0.2.0-candidate`, with exactly those two assets,
+   and reviews the raw SHA-256 of `release.json`. The candidate must have
+   `draft=false`, `prerelease=true`, and a valid publication timestamp.
    GitHub asset metadata must expose matching SHA-256 and size. Assets are not
    committed to Git. Only bytes approved for the public distribution may be
-   staged: Actions logs and artifacts in this repository are public.
+   staged: the candidate assets, Actions logs and artifacts are publicly readable.
+   This makes the candidate downloadable before PyPI promotion; it does not
+   claim that public install checks have passed or PyPI publication has occurred.
+   Draft releases are not accepted because their push-restricted visibility is
+   incompatible with this workflow's read-only token. No write permission or
+   personal access token is granted to work around that restriction.
 3. Manually dispatch `publish.yml` on this repository's current `main`, passing
    `candidate_release_id` and `release_metadata_sha256`. The workflow reads only
    this repository and anonymous official PyPI endpoints. It has no private
@@ -39,7 +46,7 @@ OpenCV remain separate distributions under their own licenses.
    Repository variable `PHYSICAL_NODE_PUBLISH_POLICY` must equal
    `v1-minimal-node-preview`. A founder may dispatch and personally approve;
    automated approval is not implemented. No step modifies these settings.
-6. After human approval, the workflow rechecks current main, exact draft
+6. After human approval, the workflow rechecks current main, exact candidate
    asset bytes, all six same-run/current-attempt successful job receipts, and
    every dependency's public unyanked hash/URL. OIDC publishes **one prebuilt
    minimal wheel**, not an sdist, Runtime wheel, private report or source archive.
@@ -51,9 +58,11 @@ OpenCV remain separate distributions under their own licenses.
    upload is never retried or silently skipped. Review a failed upload/readback
    before deciding what to do next.
 
-If any prerequisite is absent, promotion fails closed. A draft or a successful
-test run is not evidence that a package is already published. Installing this
+If any prerequisite is absent, promotion fails closed. A GitHub candidate or a
+successful test run is not evidence that a package is published to PyPI. Installing this
 experimental preview never authorizes physical execution or certifies safety.
+Failed GitHub reads report only a fixed endpoint class and an HTTP status when
+available; raw response bodies, stderr, URLs and credentials are never logged.
 
 ## Capsule v1
 
