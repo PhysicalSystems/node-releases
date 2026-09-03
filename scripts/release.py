@@ -36,12 +36,15 @@ from packaging.utils import parse_wheel_filename
 REPOSITORY = "PhysicalSystems/node-releases"
 ENVIRONMENT = "physical-node-pypi"
 POLICY = "v1-minimal-node-preview"
-VERSION = "0.2.0"
-NODE_WHEEL = "physicalsystems_node-0.2.0-py3-none-any.whl"
-CANDIDATE_TAG = "physicalsystems-node-v0.2.0-candidate"
-RUNTIME_WHEEL = "tinyedge_runtime-0.2.0-py3-none-any.whl"
+VERSION = "0.2.1"
+# Node and Runtime are independently versioned. A Node patch must not imply a
+# Runtime upgrade in capsules, installation proofs or published manifests.
+RUNTIME_VERSION = "0.2.0"
+NODE_WHEEL = f"physicalsystems_node-{VERSION}-py3-none-any.whl"
+CANDIDATE_TAG = f"physicalsystems-node-v{VERSION}-candidate"
+RUNTIME_WHEEL = f"tinyedge_runtime-{RUNTIME_VERSION}-py3-none-any.whl"
 RUNTIME_SHA256 = "4d25fcfa055bf54faf69591e4a14bec89dc7f8d086b2bed6bf19912041403937"
-PINS = {"tinyedge-runtime": "0.2.0", "numpy": "1.26.4", "opencv-python-headless": "4.10.0.84"}
+PINS = {"tinyedge-runtime": RUNTIME_VERSION, "numpy": "1.26.4", "opencv-python-headless": "4.10.0.84"}
 TARGETS = {(platform, python) for platform in ("linux-x64", "win32-x64") for python in ("3.10", "3.11", "3.12")}
 MODULES = tuple("""contract_hashing physical_camera physical_camera_preview physical_camera_preview_api
 physical_camera_v4l2 physical_camera_vacancy physical_candidates physical_discovery physical_execution_fakes
@@ -49,7 +52,7 @@ physical_execution_host physical_execution_provider physical_intent physical_nod
 physical_registry physical_routes physical_run_archive physical_run_store physical_runs physical_runs_api
 physical_so101_execution physical_so101_teaching_bridge physical_system physical_teaching_recording
 physical_waypoint_teaching physical_waypoints""".split())
-INITIALIZER = b'"""Physical Systems minimal proprietary Node distribution."""\n__version__ = "0.2.0"\n'
+INITIALIZER = f'"""Physical Systems minimal proprietary Node distribution."""\n__version__ = "{VERSION}"\n'.encode()
 MAX_JSON, MAX_WHEEL, MAX_DEPENDENCY = 128 * 1024, 4 * 1024 * 1024, 128 * 1024 * 1024
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -135,7 +138,7 @@ def validate_capsule(raw, expected_sha):
     keys(value, "contractVersion distribution version runtimeVersion sourceManifestSha256 wheel targets")
     require(value["contractVersion"] == "physicalsystems-node-release-capsule-v1"
         and value["distribution"] == "physicalsystems-node" and value["version"] == VERSION
-        and value["runtimeVersion"] == VERSION, "Unsupported release capsule")
+        and value["runtimeVersion"] == RUNTIME_VERSION, "Unsupported release capsule")
     hash_pin(value["sourceManifestSha256"])
     wheel = value["wheel"]
     keys(wheel, "filename sha256 bytes")
@@ -185,7 +188,7 @@ def inspect_node(raw, capsule):
     """Inspect data only. No imported/executed wheel code during this check."""
     require(len(raw) == capsule["wheel"]["bytes"] and sha(raw) == capsule["wheel"]["sha256"], "Node wheel bytes differ from capsule")
     package = "tinyedge_agent/"
-    dist = "physicalsystems_node-0.2.0.dist-info/"
+    dist = f"physicalsystems_node-{VERSION}.dist-info/"
     sources = {package + name + ".py" for name in MODULES} | {package + "__init__.py"}
     allowed = sources | {package + "_distribution_manifest.json"} | {dist + name for name in (
         "METADATA", "WHEEL", "entry_points.txt", "top_level.txt", "RECORD", "LICENSE", "licenses/LICENSE")}
@@ -213,7 +216,7 @@ def inspect_node(raw, capsule):
     except ValueError as error:
         raise ReleaseError("Invalid Node dependency metadata") from error
     require(metadata["Name"] == "physicalsystems-node" and metadata["Version"] == VERSION and metadata["Requires-Python"] == ">=3.10"
-        and len(requirements) == 3 and set(requirements) == {"tinyedge-runtime==0.2.0", "numpy<3,>=1.24", "opencv-python-headless<5,>=4.10"}
+        and len(requirements) == 3 and set(requirements) == {f"tinyedge-runtime=={RUNTIME_VERSION}", "numpy<3,>=1.24", "opencv-python-headless<5,>=4.10"}
         and not metadata.get_all("Provides-Extra"), "Unapproved package identity or dependencies")
     require(files[dist + "entry_points.txt"].replace(b"\r\n", b"\n").strip() ==
         b"[console_scripts]\nphysicalsystems-node = tinyedge_agent.physical_node_cli:main", "Unapproved console entrypoint")
@@ -456,7 +459,7 @@ def install_probe(capsule, fetched, platform, python):
         execute_probe([str(interpreter), "-I", "-m", "pip", "--isolated", "check"], environment)
         installation = document(execute_probe([str(interpreter), "-I", "-m", "tinyedge_agent.physical_node_cli", "--installation-info"], environment))
         expected_installation = {"contractVersion": "physicalsystems-node-installation-v1", "distribution": "physicalsystems-node",
-            "version": VERSION, "runtimeVersion": VERSION, "protocols": ["physicalsystems-node-ready-v1"]}
+            "version": VERSION, "runtimeVersion": RUNTIME_VERSION, "protocols": ["physicalsystems-node-ready-v1"]}
         require(installation == expected_installation, "Installed Node identity/protocol mismatch")
         probe = ("import json,sys; import tinyedge_runtime,numpy,cv2; "
             "assert cv2.cvtColor(numpy.zeros((2,2,3),dtype=numpy.uint8),cv2.COLOR_BGR2HSV).shape==(2,2,3); "
@@ -491,7 +494,7 @@ def validate_proofs(directory, capsule, metadata_sha, identity):
             and all(proof[key] == value for key, value in identity.items()) and proof["physicalExecutionAuthorized"] is False,
             "Install proof is not bound to this exact release and workflow attempt")
         require(proof["installation"] == {"contractVersion": "physicalsystems-node-installation-v1", "distribution": "physicalsystems-node",
-            "version": VERSION, "runtimeVersion": VERSION, "protocols": ["physicalsystems-node-ready-v1"]}
+            "version": VERSION, "runtimeVersion": RUNTIME_VERSION, "protocols": ["physicalsystems-node-ready-v1"]}
             and proof["nativeImports"] == {"numpy": "1.26.4", "opencv": "4.10.0", "hardwareOpened": False}, "Required isolated probes did not pass")
 
 
@@ -525,7 +528,7 @@ def published(directory, metadata_sha, output):
     result.mkdir(parents=True)
     for target in capsule["targets"]:
         manifest = {"contractVersion": "physicalsystems-node-install-v1", "release": VERSION,
-            "distribution": "physicalsystems-node", "runtimeVersion": VERSION, "platform": target["platform"], "python": target["python"],
+            "distribution": "physicalsystems-node", "runtimeVersion": RUNTIME_VERSION, "platform": target["platform"], "python": target["python"],
             "artifacts": sorted([{"name": "physicalsystems-node", "version": VERSION, **capsule["wheel"], "url": url},
                 *target["publicDependencies"]], key=lambda item: item["name"])}
         (result / proof_name(target["platform"], target["python"])).write_bytes(canonical(manifest))

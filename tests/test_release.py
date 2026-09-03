@@ -23,7 +23,7 @@ from scripts import release as r
 def pack(files):
     """Rehash a synthetic wheel fixture; never execute its code."""
     files = dict(files)
-    record = "physicalsystems_node-0.2.0.dist-info/RECORD"
+    record = "physicalsystems_node-0.2.1.dist-info/RECORD"
     files.pop(record, None)
     rows = [[name, "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).rstrip(b"=").decode(), str(len(raw))]
         for name, raw in sorted(files.items())]
@@ -45,7 +45,7 @@ def bind_wheel(sample, raw):
 def rehash_source(sample):
     files = sample["files"]
     manifest = {"contractVersion": "physicalsystems-node-package-source-v1", "distribution": "physicalsystems-node",
-        "version": "0.2.0", "scope": "explicit-first-party-physical-node-only", "files": [
+        "version": "0.2.1", "scope": "explicit-first-party-physical-node-only", "files": [
             {"path": name, "sha256": r.sha(data), "bytes": len(data)} for name, data in sorted(files.items())
             if name.startswith("tinyedge_agent/") and name.endswith(".py")]}
     raw = r.canonical(manifest)
@@ -59,16 +59,16 @@ def sample():
     # Explicitly synthetic package: 26 empty modules, never a physical controller.
     files = {"tinyedge_agent/" + name + ".py": b'"""Synthetic empty module, no hardware."""\n' for name in r.MODULES}
     files["tinyedge_agent/__init__.py"] = r.INITIALIZER
-    prefix = "physicalsystems_node-0.2.0.dist-info/"
+    prefix = "physicalsystems_node-0.2.1.dist-info/"
     files.update({
-        prefix + "METADATA": b"Metadata-Version: 2.4\nName: physicalsystems-node\nVersion: 0.2.0\nRequires-Python: >=3.10\nRequires-Dist: tinyedge-runtime==0.2.0\nRequires-Dist: numpy<3,>=1.24\nRequires-Dist: opencv-python-headless<5,>=4.10\n\nSynthetic fixture.\n",
+        prefix + "METADATA": b"Metadata-Version: 2.4\nName: physicalsystems-node\nVersion: 0.2.1\nRequires-Python: >=3.10\nRequires-Dist: tinyedge-runtime==0.2.0\nRequires-Dist: numpy<3,>=1.24\nRequires-Dist: opencv-python-headless<5,>=4.10\n\nSynthetic fixture.\n",
         prefix + "WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         prefix + "entry_points.txt": b"[console_scripts]\nphysicalsystems-node = tinyedge_agent.physical_node_cli:main\n",
         prefix + "top_level.txt": b"tinyedge_agent\n",
         prefix + "licenses/LICENSE": (r.ROOT / "policy/node-preview-notice.txt").read_bytes(),
     })
     capsule = {"contractVersion": "physicalsystems-node-release-capsule-v1", "distribution": "physicalsystems-node",
-        "version": "0.2.0", "runtimeVersion": "0.2.0", "sourceManifestSha256": "a" * 64, "wheel": {}, "targets": []}
+        "version": "0.2.1", "runtimeVersion": "0.2.0", "sourceManifestSha256": "a" * 64, "wheel": {}, "targets": []}
     for platform, python in sorted(r.TARGETS):
         tag = "win_amd64" if platform == "win32-x64" else "manylinux_2_17_x86_64.manylinux2014_x86_64"
         cp = "cp" + python.replace(".", "")
@@ -93,13 +93,19 @@ def validate(capsule):
 
 
 def test_exact_capsule_and_minimal_synthetic_wheel(sample):
+    assert r.VERSION == "0.2.1" and r.RUNTIME_VERSION == "0.2.0"
+    assert r.NODE_WHEEL == "physicalsystems_node-0.2.1-py3-none-any.whl"
+    assert r.CANDIDATE_TAG == "physicalsystems-node-v0.2.1-candidate"
+    assert r.RUNTIME_WHEEL == "tinyedge_runtime-0.2.0-py3-none-any.whl"
+    assert r.PINS["tinyedge-runtime"] == "0.2.0"
     assert validate(sample["capsule"]) == sample["capsule"]
     r.inspect_node(sample["wheel"], sample["capsule"])
 
 
 @pytest.mark.parametrize("fault", ["extra", "private-url", "missing-target", "duplicate-target", "unknown-platform", "unknown-python",
     "bool-size", "runtime-hash", "runtime-version", "extra-dependency", "dependency-name", "dependency-version", "incompatible-tag",
-    "credential-url", "wrong-host", "query-url", "fragment-url", "inconsistent-common", "node-filename", "source-hash", "huge-wheel"])
+    "credential-url", "wrong-host", "query-url", "fragment-url", "inconsistent-common", "node-filename", "source-hash", "huge-wheel",
+    "historical-node-version", "historical-node-wheel", "coupled-runtime-version"])
 def test_capsule_closed_shape_and_exact_pins(sample, fault):
     value = sample["capsule"]
     dep = value["targets"][0]["publicDependencies"][0]
@@ -124,6 +130,9 @@ def test_capsule_closed_shape_and_exact_pins(sample, fault):
     elif fault == "node-filename": value["wheel"]["filename"] = "tinyedge_agent-0.2.0-py3-none-any.whl"
     elif fault == "source-hash": value["sourceManifestSha256"] = "Z" * 64
     elif fault == "huge-wheel": value["wheel"]["bytes"] = r.MAX_WHEEL + 1
+    elif fault == "historical-node-version": value["version"] = "0.2.0"
+    elif fault == "historical-node-wheel": value["wheel"]["filename"] = "physicalsystems_node-0.2.0-py3-none-any.whl"
+    elif fault == "coupled-runtime-version": value["runtimeVersion"] = "0.2.1"
     with pytest.raises(r.ReleaseError): validate(value)
 
 
@@ -144,7 +153,7 @@ def test_noncanonical_or_wrong_metadata_pin(sample):
     "dynamic-import", "dynamic-exec", "upward-import", "record-hash"])
 def test_package_boundary_rejects_unapproved_contents(sample, fault):
     files = sample["files"]
-    prefix = "physicalsystems_node-0.2.0.dist-info/"
+    prefix = "physicalsystems_node-0.2.1.dist-info/"
     if fault == "private-module": files["tinyedge_agent/client.py"] = b"# private cloud code must never enter\n"
     elif fault == "native-code": files["tinyedge_agent/payload.dll"] = b"native"
     elif fault == "traversal": files["../payload"] = b"escape"
@@ -271,13 +280,14 @@ def test_published_candidate_two_asset_ingress_and_hash_binding(monkeypatch, sam
     assert all(path.startswith("repos/PhysicalSystems/node-releases/") for path in calls)
 
 
-@pytest.mark.parametrize("fault", ["draft", "not-prerelease", "wrong-tag", "missing-published-at", "invalid-date", "non-utc-date",
+@pytest.mark.parametrize("fault", ["draft", "not-prerelease", "wrong-tag", "historical-tag", "missing-published-at", "invalid-date", "non-utc-date",
     "branch", "extra", "missing", "wrong-id", "asset-digest", "asset-size", "incomplete", "substituted"])
 def test_candidate_changes_fail_closed(monkeypatch, sample, fault):
     candidate, payloads, raw, _ = fake_ingress(monkeypatch, sample)
     if fault == "draft": candidate["draft"] = True
     elif fault == "not-prerelease": candidate["prerelease"] = False
     elif fault == "wrong-tag": candidate["tag_name"] = "unapproved-candidate"
+    elif fault == "historical-tag": candidate["tag_name"] = "physicalsystems-node-v0.2.0-candidate"
     elif fault == "missing-published-at": candidate["published_at"] = None
     elif fault == "invalid-date": candidate["published_at"] = "2026-02-31T14:00:00Z"
     elif fault == "non-utc-date": candidate["published_at"] = "2026-09-03T14:00:00+01:00"
@@ -339,7 +349,7 @@ def write_proofs(tmp_path, sample, monkeypatch):
             "platform": target["platform"], "python": target["python"], "releaseMetadataSha256": r.sha(raw),
             "wheelSha256": sample["capsule"]["wheel"]["sha256"], "publicDependencies": target["publicDependencies"], **identity,
             "installation": {"contractVersion": "physicalsystems-node-installation-v1", "distribution": "physicalsystems-node",
-                "version": "0.2.0", "runtimeVersion": "0.2.0", "protocols": ["physicalsystems-node-ready-v1"]},
+                "version": "0.2.1", "runtimeVersion": "0.2.0", "protocols": ["physicalsystems-node-ready-v1"]},
             "nativeImports": {"numpy": "1.26.4", "opencv": "4.10.0", "hardwareOpened": False}, "physicalExecutionAuthorized": False}
         path = tmp_path / r.proof_name(target["platform"], target["python"])
         path.write_bytes(r.canonical(proof))
@@ -349,7 +359,8 @@ def write_proofs(tmp_path, sample, monkeypatch):
     return identity, r.sha(raw), proofs, jobs
 
 
-@pytest.mark.parametrize("fault", [None, "missing", "extra", "attempt", "wheel", "capsule", "dependency", "failed-job", "skipped-job", "native", "authorized"])
+@pytest.mark.parametrize("fault", [None, "missing", "extra", "attempt", "wheel", "capsule", "dependency", "failed-job", "skipped-job", "native", "authorized",
+    "historical-node-version", "coupled-runtime-version"])
 def test_same_attempt_six_proofs_required(sample, tmp_path, monkeypatch, fault):
     identity, pin, proofs, jobs = write_proofs(tmp_path, sample, monkeypatch)
     path, proof = proofs[0]
@@ -363,6 +374,8 @@ def test_same_attempt_six_proofs_required(sample, tmp_path, monkeypatch, fault):
     elif fault == "skipped-job": jobs[0]["conclusion"] = "skipped"
     elif fault == "native": proof["nativeImports"]["opencv"] = "4.9.0"
     elif fault == "authorized": proof["physicalExecutionAuthorized"] = True
+    elif fault == "historical-node-version": proof["installation"]["version"] = "0.2.0"
+    elif fault == "coupled-runtime-version": proof["installation"]["runtimeVersion"] = "0.2.1"
     if fault != "missing": path.write_bytes(r.canonical(proof))
     if fault:
         with pytest.raises(r.ReleaseError): r.validate_proofs(tmp_path, sample["capsule"], pin, identity)
@@ -400,6 +413,10 @@ def test_postpublication_exact_readback_only_then_install_manifests(sample, tmp_
         manifests = [json.loads(path.read_bytes()) for path in output.iterdir()]
         assert len(manifests) == 6
         assert all(item["contractVersion"] == "physicalsystems-node-install-v1" and len(item["artifacts"]) == 4 for item in manifests)
+        assert all(item["release"] == "0.2.1" and item["runtimeVersion"] == "0.2.0" for item in manifests)
+        assert all({art["name"]: art["version"] for art in item["artifacts"]} == {
+            "physicalsystems-node": "0.2.1", "tinyedge-runtime": "0.2.0",
+            "numpy": "1.26.4", "opencv-python-headless": "4.10.0.84"} for item in manifests)
         assert all(next(art for art in item["artifacts"] if art["name"] == "physicalsystems-node")["url"] == artifact["url"] for item in manifests)
 
 
@@ -473,7 +490,8 @@ def test_stage_rechecks_identity_and_protection_after_all_mutable_reads(monkeypa
     if fault != "identity": assert calls[5] == "protection"
 
 
-def test_clean_install_probe_is_offline_hash_pinned_and_no_hardware(monkeypatch, sample, tmp_path):
+@pytest.mark.parametrize("fault", [None, "historical-node-version", "coupled-runtime-version"])
+def test_clean_install_probe_is_offline_hash_pinned_and_no_hardware(monkeypatch, sample, tmp_path, fault):
     import sys
     target_platform = "win32-x64" if sys.platform == "win32" else "linux-x64"
     target_python = f"{sys.version_info.major}.{sys.version_info.minor}"
@@ -488,8 +506,11 @@ def test_clean_install_probe_is_offline_hash_pinned_and_no_hardware(monkeypatch,
         calls.append(command)
         assert "GH_TOKEN" not in environment
         if "--installation-info" in command:
-            return r.canonical({"contractVersion": "physicalsystems-node-installation-v1", "distribution": "physicalsystems-node",
-                "version": "0.2.0", "runtimeVersion": "0.2.0", "protocols": ["physicalsystems-node-ready-v1"]})
+            installation = {"contractVersion": "physicalsystems-node-installation-v1", "distribution": "physicalsystems-node",
+                "version": "0.2.1", "runtimeVersion": "0.2.0", "protocols": ["physicalsystems-node-ready-v1"]}
+            if fault == "historical-node-version": installation["version"] = "0.2.0"
+            elif fault == "coupled-runtime-version": installation["runtimeVersion"] = "0.2.1"
+            return r.canonical(installation)
         if "-c" in command:
             return r.canonical({"numpy": "1.26.4", "opencv": "4.10.0", "hardwareOpened": False})
         if "--require-hashes" in command:
@@ -497,7 +518,13 @@ def test_clean_install_probe_is_offline_hash_pinned_and_no_hardware(monkeypatch,
             assert req.count("--hash=sha256:") == 4
         return b""
     monkeypatch.setattr(r, "execute_probe", execute)
+    if fault:
+        with pytest.raises(r.ReleaseError, match="Installed Node identity/protocol mismatch"):
+            r.install_probe(sample["capsule"], {r.NODE_WHEEL: sample["wheel"]}, target_platform, target_python)
+        assert all("-c" not in command for command in calls)
+        return
     result = r.install_probe(sample["capsule"], {r.NODE_WHEEL: sample["wheel"]}, target_platform, target_python)
+    assert result["installation"]["version"] == "0.2.1" and result["installation"]["runtimeVersion"] == "0.2.0"
     assert result["nativeImports"]["hardwareOpened"] is False
     install = next(command for command in calls if "--require-hashes" in command)
     assert {"--no-index", "--no-deps", "--only-binary=:all:", "--isolated"} <= set(install)

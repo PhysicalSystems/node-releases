@@ -20,7 +20,7 @@ OpenCV remain separate distributions under their own licenses.
    emits only the approved wheel and canonical `release.json`. Neither the
    private exporter nor its source/evidence is uploaded here.
 2. The operator publishes a **candidate prerelease targeting `main`** here,
-   tagged `physicalsystems-node-v0.2.0-candidate`, with exactly those two assets,
+   tagged `physicalsystems-node-v0.2.1-candidate`, with exactly those two assets,
    and reviews the raw SHA-256 of `release.json`. The candidate must have
    `draft=false`, `prerelease=true`, and a valid publication timestamp.
    GitHub asset metadata must expose matching SHA-256 and size. Assets are not
@@ -82,7 +82,7 @@ values, UTF-8 and **no trailing newline**. Unknown or duplicate fields fail.
 ```text
 contractVersion = "physicalsystems-node-release-capsule-v1"
 distribution = "physicalsystems-node"
-version = "0.2.0"
+version = "0.2.1"
 runtimeVersion = "0.2.0"
 sourceManifestSha256 = SHA256(canonical embedded package source manifest)
 wheel = {filename, sha256, bytes}
@@ -105,6 +105,21 @@ created only after the real Node PyPI URL is verified. The trust chain is the
 operator's explicit metadata pin, inspected wheel contents, fresh public CI,
 human-protected promotion and final exact public readback. This repository does
 not claim independently to have observed the private CI proof.
+
+## Node 0.2.1 patch preparation
+
+The current verifier accepts only `physicalsystems-node==0.2.1`, while Runtime
+remains the exact approved `tinyedge-runtime==0.2.0` release. These versions are
+independent: the Node capsule, installed identity and final install manifests
+must all report Node `0.2.1` and Runtime `0.2.0`. Updating this tooling does not
+publish either package, accept an unreviewed Runtime update, or promote an npm
+channel. The same six native-install targets and human-protected OIDC gate apply.
+
+Published Node `0.2.0`, its candidate tag/assets and historical evidence remain
+immutable. Stage a new `physicalsystems-node-v0.2.1-candidate` only after its
+separate source/allowlist review; never overwrite the old candidate or reuse its
+proofs. Historical `0.2.0` readback uses the reviewed tooling revision for that
+release, not the current `0.2.1` verifier.
 
 ## Local regression tests
 
