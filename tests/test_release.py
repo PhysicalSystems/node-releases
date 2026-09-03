@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import zipfile
 
@@ -400,6 +401,33 @@ def test_postpublication_exact_readback_only_then_install_manifests(sample, tmp_
         assert len(manifests) == 6
         assert all(item["contractVersion"] == "physicalsystems-node-install-v1" and len(item["artifacts"]) == 4 for item in manifests)
         assert all(next(art for art in item["artifacts"] if art["name"] == "physicalsystems-node")["url"] == artifact["url"] for item in manifests)
+
+
+def test_readback_snapshot_survives_pypa_attestation_without_relaxing_stage_checks(sample, tmp_path, monkeypatch):
+    upload_stage, snapshot = tmp_path / "upload-stage", tmp_path / "readback-input"
+    metadata = r.canonical(sample["capsule"])
+    pin = r.sha(metadata)
+    r.stage(upload_stage, {"release.json": metadata, r.NODE_WHEEL: sample["wheel"]})
+    r.check_stage(upload_stage, pin)
+    shutil.copytree(upload_stage, snapshot)
+    r.check_stage(snapshot, pin)
+    # Match the pinned PyPA Action's filesystem mutation, without signing or
+    # uploading anything. This synthetic sidecar is never treated as evidence.
+    (upload_stage / "upload" / (r.NODE_WHEEL + ".publish.attestation")).write_bytes(b'{"synthetic":true}')
+    with pytest.raises(r.ReleaseError, match="Unexpected publication files"):
+        r.check_stage(upload_stage, pin)
+    artifact = {**sample["capsule"]["wheel"], "url": "https://files.pythonhosted.org/packages/synthetic/" + r.NODE_WHEEL}
+    monkeypatch.setattr(r, "dependencies_public", lambda capsule: None)
+    monkeypatch.setattr(r, "public_metadata", lambda name, version: metadata_for(artifact))
+    monkeypatch.setattr(r, "public_read", lambda url, size: sample["wheel"])
+    r.published(snapshot, pin, tmp_path / "manifests")
+    assert len(list((tmp_path / "manifests").iterdir())) == 6
+    assert (snapshot / "upload" / r.NODE_WHEEL).read_bytes() == sample["wheel"]
+    assert sorted(item.name for item in (snapshot / "upload").iterdir()) == [r.NODE_WHEEL]
+    # The snapshot remains strict: neither an extra sidecar nor altered wheel
+    # bytes may be silently accepted in the readback input itself.
+    (snapshot / "upload" / r.NODE_WHEEL).write_bytes(sample["wheel"] + b"tampered")
+    with pytest.raises(r.ReleaseError): r.check_stage(snapshot, pin)
 
 
 def test_child_probe_environment_has_no_tokens_or_python_path(monkeypatch):
